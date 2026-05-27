@@ -1,3 +1,5 @@
+
+
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -149,7 +151,142 @@ function ProjectCard({p,active,onClick}){
   );
 }
 
-< truncated lines 152-305 >
+// ─── MAIN APP ───────────────────────────────────────────────────────────────
+
+export default function App(){
+  const [projects,setProjects]=useState([]);
+  const [costs,setCosts]=useState([]);
+  const [logs,setLogs]=useState([]);
+  const [selectedId,setSelectedId]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState('');
+
+  // Load data
+  useEffect(()=>{
+    loadData();
+  },[]);
+
+  async function loadData(){
+    try {
+      const [p,c,l]=await Promise.all([
+        supabase.from('projects').select('*'),
+        supabase.from('cost_entries').select('*'),
+        supabase.from('progress_logs').select('*'),
+      ]);
+      if(p.error || c.error || l.error) throw new Error('Load failed');
+      setProjects(p.data||[]);
+      setCosts(c.data||[]);
+      setLogs(l.data||[]);
+      if(p.data?.length>0) setSelectedId(p.data[0].id);
+    } catch(e) {
+      setError(`Error: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function updateProject(id,updates){
+    const {error}=await supabase.from('projects').update(updates).eq('id',id);
+    if(error) setError(error.message);
+    else loadData();
+  }
+
+  async function addCost(){
+    const amt=parseFloat(costForm.amount);
+    if(!costForm.desc||isNaN(amt)||amt<=0) return;
+    const {error}=await supabase.from('cost_entries').insert({
+      project_id: selectedId,
+      entry_date: todayStr(),
+      category: costForm.category,
+      description: costForm.desc,
+      amount: amt,
+    });
+    if(error) setError(error.message);
+    else { setCostForm({category:COST_CATEGORIES[0],desc:'',amount:''}); loadData(); }
+  }
+
+  async function deleteCost(id){
+    const {error}=await supabase.from('cost_entries').delete().eq('id',id);
+    if(error) setError(error.message);
+    else loadData();
+  }
+
+  async function addLog(){
+    if(!logText.trim()) return;
+    const {error}=await supabase.from('progress_logs').insert({
+      project_id: selectedId,
+      log_date: todayStr(),
+      note: logText,
+    });
+    if(error) setError(error.message);
+    else { setLogText(''); loadData(); }
+  }
+
+  if(loading) return <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center'}}>Loading dashboard...</div>;
+
+  const sel=projects.find(p=>p.id===selectedId);
+  const selCosts=costs.filter(c=>c.project_id===selectedId);
+  const selLogs=logs.filter(l=>l.project_id===selectedId);
+  const [costForm,setCostForm]=useState({category:COST_CATEGORIES[0],desc:'',amount:''});
+  const [logText,setLogText]=useState('');
+
+  const pipeline=projects.reduce((s,p)=>s+(p.total_value||0),0);
+  const collected=projects.reduce((s,p)=>s+(p.dp_paid?p.dp:0)+(p.final_paid?p.total_value-p.dp:0),0);
+  const costOut=costs.reduce((s,c)=>s+(c.amount||0),0);
+  const profit=collected-costOut;
+  const catCounts=Object.fromEntries(PROJECT_CATEGORIES.map(c=>[c.id,projects.filter(p=>p.category===c.id).length]));
+
+  return(
+    <div style={{minHeight:'100vh',background:'#F3F4F6',fontFamily:"'DM Sans','Segoe UI',sans-serif",color:'#111827',display:'flex',flexDirection:'column'}}>
+      <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+
+      {/* TOPBAR */}
+      <div style={{background:'#FFFFFF',borderBottom:'1px solid #E5E7EB',padding:'0 24px',flexShrink:0,boxShadow:'0 1px 6px rgba(0,0,0,.06)'}}>
+        <div style={{display:'flex',alignItems:'stretch',justifyContent:'space-between',gap:16}}>
+          <div style={{display:'flex',alignItems:'center',gap:12,padding:'14px 0'}}>
+            <div style={{width:42,height:42,borderRadius:11,background:'linear-gradient(135deg,#F5A623,#F5C842)',
+              display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,boxShadow:'0 2px 10px rgba(245,166,35,.35)'}}>✦</div>
+            <div>
+              <div style={{fontSize:16,fontWeight:800,color:'#111827',fontFamily:"'Syne',sans-serif",lineHeight:1.1}}>
+                Luminux Jakarta
+              </div>
+              <div style={{fontSize:10,color:'#9CA3AF',letterSpacing:.4,marginTop:2}}>
+                Membrane Division Project Management
+              </div>
+            </div>
+          </div>
+
+          <div style={{display:'flex',alignItems:'center',gap:6,padding:'12px 0'}}>
+            {PROJECT_CATEGORIES.map(cat=>(
+              <div key={cat.id} style={{display:'flex',alignItems:'center',gap:5,
+                background:cat.bg,border:`1px solid ${cat.border}`,borderRadius:99,padding:'4px 12px'}}>
+                <span style={{fontSize:12}}>{cat.icon}</span>
+                <span style={{fontSize:11,fontWeight:700,color:cat.color}}>{catCounts[cat.id]}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{display:'flex',alignItems:'stretch'}}>
+            {[{l:'Pipeline',v:rpS(pipeline),c:'#1E40AF',icon:'📋'},
+              {l:'Collected',v:rpS(collected),c:'#059669',icon:'💰'},
+              {l:'Cost Out',v:rpS(costOut),c:'#DC2626',icon:'💸'},
+              {l:'Profit',v:rpS(profit),c:profit>=0?'#059669':'#DC2626',icon:'📈'}].map(({l,v,c,icon},i)=>(
+              <div key={l} style={{display:'flex',flexDirection:'column',justifyContent:'center',
+                padding:'0 18px',borderLeft:i===0?'1px solid #F3F4F6':'1px solid #F3F4F6',textAlign:'center',minWidth:80}}>
+                <div style={{fontSize:10,fontWeight:600,color:'#9CA3AF',letterSpacing:.3,marginBottom:2}}>{icon} {l}</div>
+                <div style={{fontSize:15,fontWeight:800,color:c,fontFamily:"'Syne',sans-serif"}}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* BODY */}
+      <div style={{display:'flex',flex:1,overflow:'hidden'}}>
+        {/* LEFT */}
+        <div style={{width:340,flexShrink:0,background:'#FFFFFF',borderRight:'1px solid #E5E7EB',overflowY:'auto',padding:'14px'}}>
+          {PROJECT_CATEGORIES.map(cat=>{
+            const list=projects.filter(p=>p.category===cat.id);
             const totalVal=list.reduce((s,p)=>s+(p.total_value||0),0);
             return(
               <div key={cat.id} style={{marginBottom:12}}>
@@ -168,8 +305,29 @@ function ProjectCard({p,active,onClick}){
         <div style={{flex:1,padding:'20px 24px',overflowY:'auto'}}>
           {error&&<div style={{background:'#FEF2F2',border:'1px solid #FECACA',color:'#B91C1C',borderRadius:8,padding:12,marginBottom:16}}>⚠ {error}</div>}
           {sel?(
-            <DetailPanel p={sel} costs={selCosts} logs={selLogs}
-              onUpdate={updateProject} onAddCost={addCost} onDeleteCost={deleteCost} onAddLog={addLog}/>
+            <div>
+              <div style={{background:'#FFFFFF',border:'1px solid #E5E7EB',borderRadius:14,padding:18,marginBottom:16}}>
+                <div style={{fontSize:22,fontWeight:800,color:'#111827',fontFamily:"'Syne',sans-serif",marginBottom:4}}>{sel.client}</div>
+                <div style={{fontSize:12,color:'#6B7280',marginBottom:12}}>📍 {sel.location}</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+                  {[['Progress',`${sel.progress}%`,'#F5A623'],['Deadline',`${Math.ceil((new Date(sel.deadline)-new Date())/86400000)}d`,'#059669'],
+                    ['Status',sel.status,'#374151'],['Value',rpS(sel.total_value),'#1E40AF']].map(([l,v,c])=>(
+                    <div key={l} style={{background:'#F9FAFB',borderRadius:10,padding:8,textAlign:'center'}}>
+                      <div style={{fontSize:9,fontWeight:600,color:'#9CA3AF',marginBottom:3}}>{l}</div>
+                      <div style={{fontSize:13,fontWeight:800,color:c}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={{background:'#FFFFFF',border:'1px solid #E5E7EB',borderRadius:14,padding:18}}>
+                <div style={{marginBottom:12}}>
+                  <label style={{display:'block',fontSize:11,fontWeight:700,color:'#9CA3AF',marginBottom:6,textTransform:'uppercase'}}>Status</label>
+                  <select value={sel.status} onChange={e=>updateProject(sel.id,{status:e.target.value})} style={inputSt}>
+                    {['Quotation Sent','DP Received','In Production','On Site','Completed','Overdue'].map(s=><option key={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
           ):(
             <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',flexDirection:'column',gap:12}}>
               <div style={{fontSize:40}}>✦</div>
@@ -179,125 +337,5 @@ function ProjectCard({p,active,onClick}){
         </div>
       </div>
     </div>
-  );
-}
-
-// ─── DETAIL PANEL (stub for now, will expand) ───────────────────────────────
-
-function DetailPanel({p,costs,logs,onUpdate,onAddCost,onDeleteCost,onAddLog}){
-  const [tab,setTab]=useState('overview');
-  const cat=PROJECT_CATEGORIES.find(c=>c.id===p.category)||PROJECT_CATEGORIES[0];
-  
-  return(
-    <div>
-      <div style={{background:`linear-gradient(135deg, ${cat.bg}, #FFFFFF)`,border:`1.5px solid ${cat.border}`,borderRadius:16,padding:'18px 22px',marginBottom:18,boxShadow:`0 2px 12px ${cat.color}18`}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10,flexWrap:'wrap',gap:8}}>
-          <CategoryBadge catId={p.category}/>
-          <StatusBadge status={p.status}/>
-        </div>
-        <div style={{fontSize:10,fontWeight:700,color:'#9CA3AF',letterSpacing:1.5,fontFamily:"'DM Mono',monospace",marginBottom:4}}>
-          {p.invoice_type?.toUpperCase()} · {p.quote_ref}
-        </div>
-        <div style={{fontSize:22,fontWeight:800,color:'#111827',fontFamily:"'Syne',sans-serif",lineHeight:1.2,marginBottom:4}}>
-          {p.client}
-        </div>
-        <div style={{fontSize:12,color:'#6B7280',marginBottom:12}}>📍 {p.location}</div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
-          {[['Progress',`${p.progress}%`,'#F5A623'],['Deadline',`${Math.ceil((new Date(p.deadline)-new Date())/86400000)}d`,'#059669'],
-            ['Status',p.status,'#374151'],['Value',rpS(p.total_value),'#1E40AF']].map(([l,v,c])=>(
-            <div key={l} style={{background:'rgba(255,255,255,.8)',borderRadius:10,padding:8,textAlign:'center',border:'1px solid #E5E7EB'}}>
-              <div style={{fontSize:9,fontWeight:600,color:'#9CA3AF',marginBottom:3}}>{l}</div>
-              <div style={{fontSize:13,fontWeight:800,color:c,fontFamily:"'Syne',sans-serif"}}>{v}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div style={{display:'flex',gap:3,background:'#F3F4F6',borderRadius:12,padding:4,marginBottom:16}}>
-        {['overview','costs','logs'].map(t=>(
-          <button key={t} onClick={()=>setTab(t)} style={{flex:1,background:tab===t?'#FFFFFF':'transparent',border:'none',borderRadius:9,padding:8,fontSize:11,fontWeight:700,color:tab===t?cat.color:'#9CA3AF',cursor:'pointer',textTransform:'capitalize'}}>
-            {t}
-          </button>
-        ))}
-      </div>
-
-      {tab==='overview'&&(
-        <div style={{background:'#FFFFFF',border:'1px solid #E5E7EB',borderRadius:14,padding:18}}>
-          <div style={{marginBottom:12}}>
-            <label style={{display:'block',fontSize:11,fontWeight:700,color:'#9CA3AF',marginBottom:6,textTransform:'uppercase'}}>Status</label>
-            <select value={p.status} onChange={e=>onUpdate(p.id,{status:e.target.value})} style={inputSt}>
-              {['Quotation Sent','DP Received','In Production','On Site','Completed','Overdue'].map(s=><option key={s}>{s}</option>)}
-            </select>
-          </div>
-          <div style={{marginBottom:12}}>
-            <label style={{display:'block',fontSize:11,fontWeight:700,color:'#9CA3AF',marginBottom:6,textTransform:'uppercase'}}>Progress</label>
-            <input type="range" min="0" max="100" value={p.progress} onChange={e=>onUpdate(p.id,{progress:Number(e.target.value)})} style={{width:'100%',accentColor:'#F5A623'}}/>
-            <div style={{marginTop:6,fontSize:12,fontWeight:600,color:'#F5A623'}}>{p.progress}%</div>
-          </div>
-          <div style={{marginBottom:12}}>
-            <label style={{display:'block',fontSize:11,fontWeight:700,color:'#9CA3AF',marginBottom:6,textTransform:'uppercase'}}>Category</label>
-            <select value={p.category} onChange={e=>onUpdate(p.id,{category:e.target.value})} style={inputSt}>
-              {PROJECT_CATEGORIES.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{display:'block',fontSize:11,fontWeight:700,color:'#9CA3AF',marginBottom:6,textTransform:'uppercase'}}>Technician</label>
-            <select value={p.technician||''} onChange={e=>onUpdate(p.id,{technician:e.target.value})} style={inputSt}>
-              <option value="">— Assign —</option>
-              {TECHNICIANS.map(t=><option key={t.name} value={t.name}>{t.name}</option>)}
-            </select>
-          </div>
-        </div>
-      )}
-
-      {tab==='costs'&&(
-        <div style={{background:'#FFFFFF',border:'1px solid #E5E7EB',borderRadius:14,padding:18}}>
-          <div style={{fontSize:12,fontWeight:700,color:'#374151',marginBottom:12}}>
-            Total Spent: {rpS(costs.reduce((s,c)=>s+(c.amount||0),0))}
-          </div>
-          <div style={{display:'flex',flexDirection:'column',gap:6}}>
-            {costs.map(c=>(
-              <div key={c.id} style={{display:'flex',justifyContent:'space-between',padding:'8px 10px',background:'#F9FAFB',borderRadius:8,fontSize:11}}>
-                <div>
-                  <div style={{fontWeight:600,color:'#111827'}}>{c.description}</div>
-                  <div style={{color:'#9CA3AF',fontSize:10}}>{c.category}</div>
-                </div>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontWeight:700,color:'#1F2937',fontFamily:"'DM Mono',monospace"}}>{rp(c.amount)}</span>
-                  <button onClick={()=>onDeleteCost(c.id)} style={{background:'#FEE2E2',border:'1px solid #FECACA',color:'#EF4444',borderRadius:6,padding:'2px 6px',cursor:'pointer',fontSize:10,fontWeight:700}}>✕</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {tab==='logs'&&(
-        <div style={{background:'#FFFFFF',border:'1px solid #E5E7EB',borderRadius:14,padding:18}}>
-          <div style={{display:'flex',gap:8,marginBottom:12}}>
-            <LogInput onAdd={note=>onAddLog(p.id,note)}/>
-          </div>
-          <div style={{display:'flex',flexDirection:'column',gap:6}}>
-            {logs.map(l=>(
-              <div key={l.id} style={{padding:'10px 14px',background:'#F9FAFB',borderRadius:8}}>
-                <div style={{fontWeight:600,color:'#9CA3AF',fontSize:10,marginBottom:4}}>{l.log_date}</div>
-                <div style={{color:'#374151',fontSize:12}}>{l.note}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LogInput({onAdd}){
-  const [text,setText]=useState('');
-  return(
-    <>
-      <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&text.trim()){onAdd(text.trim());setText('');}}}
-        placeholder="Update..." style={{...inputSt,flex:1}}/>
-      <button onClick={()=>{if(text.trim()){onAdd(text.trim());setText('');}}} style={{background:'linear-gradient(135deg,#F5A623,#F5C842)',border:'none',borderRadius:10,color:'#7B3F00',fontWeight:700,cursor:'pointer',padding:'9px 16px',whiteSpace:'nowrap'}}>Log</button>
-    </>
   );
 }
